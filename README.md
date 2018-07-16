@@ -8,6 +8,9 @@ To install the cli tool, just run:
 go get -u github.com/whyrusleeping/go-netdef/netdef
 ```
 
+## Dependencies
+This only runs on linux right now, and requires a working installation of `openvswitch`.
+
 ## Usage
 Netdef can be used as a package, but it also provides a command line tool
 that operates on json formatted 'netdef' specifications. An example such file might look like:
@@ -57,6 +60,15 @@ To teardown the network, run:
 ```
 sudo netdef cleanup example.nd
 ```
+
+## TODO
+Theres a lot more I want to do here, this is a partial list (roughly in order of priority):
+- [ ] Actually implement latencies/bandwidth/packet-loss with go-ctrlnet
+- [ ] Better permissions (running everything as root sucks)
+- [ ] Network to network links
+- [ ] Better validation of config
+- [ ] Multi-host namespaces (via openvswitch)
+- [ ] Different 'bridge' implementations (i.e. brctl)
 
 ## License
 MIT
