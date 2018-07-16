@@ -1,0 +1,22 @@
+{
+	"networks": [{
+		"name":"wild",
+		"iprange": "10.1.1.0/24"
+	}],
+	"peers": [
+		{
+			"name":"wolf",
+			"links": {
+				"wild": {}
+			}
+		},
+		{
+			"name":"bear",
+			"links": {
+				"wild": {
+					"latency": "10ms"
+				}
+			}
+		}
+	]
+}
