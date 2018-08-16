@@ -1,9 +1,11 @@
 package netdef
 
 import (
+	"bufio"
 	"fmt"
 	"math/big"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -43,6 +45,47 @@ func BridgeAddPort(bridge, ifname string) error {
 	return callBin("ovs-vsctl", "add-port", bridge, ifname)
 }
 
+func PortSetParameter(port, param, val string) error {
+	typeStr := fmt.Sprintf("%s=%s", param, val)
+	return callBin("ovs-vsctl", "set", "interface", port, typeStr)
+}
+
+func PortSetOption(port, option, peer string) error {
+	param := fmt.Sprintf("options:%s", option)
+	return PortSetParameter(port, param, peer)
+}
+
+func PatchBridges(a, b string) error {
+	ab := fmt.Sprintf("p-%s-%s", a, b)
+	ba := fmt.Sprintf("p-%s-%s", b, a)
+	if err := CreateVeth(ab); err != nil {
+		return err
+	}
+	if err := CreateVeth(ba); err != nil {
+		return err
+	}
+	if err := BridgeAddPort(a, ab); err != nil {
+		return err
+	}
+	if err := PortSetParameter(ab, "type", "patch"); err != nil {
+		return err
+	}
+	if err := PortSetOption(ab, "peer", ba); err != nil {
+		return err
+	}
+	if err := BridgeAddPort(b, ba); err != nil {
+		return err
+	}
+	if err := PortSetParameter(ba, "type", "patch"); err != nil {
+		return err
+	}
+	if err := PortSetOption(ba, "peer", ab); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func NetNsExec(ns string, cmdn string, nsargs ...string) error {
 	args := []string{"ip", "netns", "exec", ns, cmdn}
 	args = append(args, nsargs...)
@@ -51,6 +94,10 @@ func NetNsExec(ns string, cmdn string, nsargs ...string) error {
 
 func SetDev(dev string, state string) error {
 	return callBin("ip", "link", "set", "dev", dev, state)
+}
+
+func CreateVeth(a string) error {
+	return callBin("ip", "link", "add", a, "type", "veth")
 }
 
 func CreateVethPair(a, b string) error {
@@ -73,8 +120,10 @@ type Config struct {
 type Network struct {
 	Name    string
 	IpRange string
-	ipnet   *net.IPNet
-	nextIp  int64
+	Links   map[string]LinkOpts
+
+	ipnet  *net.IPNet
+	nextIp int64
 }
 
 func (n *Network) GetNextIp() (string, error) {
@@ -159,7 +208,8 @@ func (lo *LinkOpts) Apply(iface string) error {
 
 func Create(cfg *Config) error {
 	nets := make(map[string]*Network)
-	for _, n := range cfg.Networks {
+	for i := range cfg.Networks {
+		n := cfg.Networks[i]
 		if _, ok := nets[n.Name]; ok {
 			return fmt.Errorf("duplicate network name: %s", n.Name)
 		}
@@ -192,9 +242,25 @@ func Create(cfg *Config) error {
 		}
 	}
 
+	for name, net := range nets {
+		for targetNet := range net.Links {
+			if _, ok := nets[targetNet]; !ok {
+				return fmt.Errorf("network %s has link to non-existent network %s", name, targetNet)
+			}
+		}
+	}
+
 	for n := range nets {
 		if err := CreateBridge(n); err != nil {
 			return err
+		}
+	}
+
+	for name, net := range nets {
+		for targetNet := range net.Links {
+			if err := PatchBridges(name, targetNet); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -237,7 +303,8 @@ func Create(cfg *Config) error {
 			}
 
 			if err := l.Apply(lnA); err != nil {
-				return err
+				fmt.Println(err)
+				// return err
 			}
 		}
 	}
@@ -276,18 +343,25 @@ func main() {
 				Name:    "homenetwork",
 				IpRange: "10.1.1.0/24",
 			},
+			{
+				Name:    "officenetwork",
+				IpRange: "10.1.2.0/24",
+				Links: map[string]LinkOpts{
+					"homenetwork": LinkOpts{},
+				},
+			},
 		},
 		Peers: []Peer{
 			{
-				Name: "compy1",
+				Name: "c1",
 				Links: map[string]LinkOpts{
 					"homenetwork": LinkOpts{},
 				},
 			},
 			{
-				Name: "compy2",
+				Name: "c2",
 				Links: map[string]LinkOpts{
-					"homenetwork": LinkOpts{
+					"officenetwork": LinkOpts{
 						Latency: "50ms",
 					},
 				},
@@ -299,4 +373,10 @@ func main() {
 		panic(err)
 	}
 
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+
+	if err := Cleanup(cfg); err != nil {
+		panic(err)
+	}
 }
