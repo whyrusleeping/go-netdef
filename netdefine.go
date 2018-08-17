@@ -396,8 +396,9 @@ func main() {
 	cfg := &Config{
 		Networks: []Network{
 			{
-				Name:    "homenetwork",
-				IpRange: "10.1.1.0/24",
+				Name:     "homenetwork",
+				IpRange:  "10.1.1.0/24",
+				BindMask: "255.255.0.0",
 			},
 			{
 				Name:    "officenetwork",
@@ -413,6 +414,7 @@ func main() {
 				Links: map[string]LinkOpts{
 					"homenetwork": LinkOpts{},
 				},
+				BindMask: "255.255.0.0",
 			},
 			{
 				Name: "c2",
@@ -433,7 +435,7 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 
-	if err := r.Cleanup; err != nil {
+	if err := r.Cleanup(); err != nil {
 		panic(err)
 	}
 }
