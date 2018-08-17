@@ -118,15 +118,16 @@ type Config struct {
 }
 
 type Network struct {
-	Name    string
-	IpRange string
-	Links   map[string]LinkOpts
+	Name     string
+	IpRange  string
+	Links    map[string]LinkOpts
+	BindMask string
 
 	ipnet  *net.IPNet
 	nextIp int64
 }
 
-func (n *Network) GetNextIp() (string, error) {
+func (n *Network) GetNextIp(mask string) (string, error) {
 	ip := n.ipnet.IP
 
 	// TODO: better algorithm for this all. github.com/apparentlymart/go-cidr looks decent
@@ -136,16 +137,24 @@ func (n *Network) GetNextIp() (string, error) {
 	ipn.Add(ipn, big.NewInt(n.nextIp))
 
 	b := ipn.Bytes()
+	subnetMask := net.IPMask(net.ParseIP(mask))
+	if subnetMask == nil {
+		subnetMask = net.IPMask(net.ParseIP(n.BindMask))
+		if subnetMask == nil {
+			subnetMask = n.ipnet.Mask
+		}
+	}
 	out := net.IPNet{
 		IP:   net.IPv4(b[0], b[1], b[2], b[3]),
-		Mask: n.ipnet.Mask,
+		Mask: subnetMask,
 	}
 	return out.String(), nil
 }
 
 type Peer struct {
-	Name  string
-	Links map[string]LinkOpts
+	Name     string
+	Links    map[string]LinkOpts
+	BindMask string
 }
 
 type LinkOpts struct {
@@ -285,6 +294,10 @@ func Create(cfg *Config) error {
 				return errors.Wrap(err, "failed to assign veth to namespace")
 			}
 
+			if err := NetNsExec(p.Name, "ip", "link", "set", "dev", "lo", "up"); err != nil {
+				return errors.Wrap(err, "set ns link up")
+			}
+
 			if err := NetNsExec(p.Name, "ip", "link", "set", "dev", lnA, "up"); err != nil {
 				return errors.Wrap(err, "set ns link up")
 			}
@@ -293,7 +306,7 @@ func Create(cfg *Config) error {
 				return err
 			}
 
-			next, err := nets[net].GetNextIp()
+			next, err := nets[net].GetNextIp(p.BindMask)
 			if err != nil {
 				return err
 			}
