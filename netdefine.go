@@ -25,91 +25,124 @@ func callBin(args ...string) error {
 
 }
 
-func CreateNamespace(name string) error {
-	return callBin("ip", "netns", "add", name)
+func (r *RenderedNetwork) CreateNamespace(name string) error {
+	err := callBin("ip", "netns", "add", name)
+	if err == nil {
+		r.Namespaces[name] = struct{}{}
+	}
+	return err
 }
 
-func DeleteNamespace(name string) error {
-	return callBin("ip", "netns", "del", name)
+func (r *RenderedNetwork) DeleteNamespace(name string) error {
+	err := callBin("ip", "netns", "del", name)
+	if err == nil {
+		delete(r.Namespaces, name)
+	}
+	return err
 }
 
-func CreateBridge(name string) error {
-	return callBin("ovs-vsctl", "add-br", name)
+func (r *RenderedNetwork) CreateBridge(name string) error {
+	err := callBin("ovs-vsctl", "add-br", name)
+	if err == nil {
+		r.Bridges[name] = struct{}{}
+	}
+	return err
 }
 
-func DeleteBridge(name string) error {
-	return callBin("ovs-vsctl", "del-br", name)
+func (r *RenderedNetwork) DeleteBridge(name string) error {
+	err := callBin("ovs-vsctl", "del-br", name)
+	if err == nil {
+		delete(r.Bridges, name)
+	}
+	return err
 }
 
-func BridgeAddPort(bridge, ifname string) error {
+func (r *RenderedNetwork) BridgeAddPort(bridge, ifname string) error {
 	return callBin("ovs-vsctl", "add-port", bridge, ifname)
 }
 
-func PortSetParameter(port, param, val string) error {
+func (r *RenderedNetwork) PortSetParameter(port, param, val string) error {
 	typeStr := fmt.Sprintf("%s=%s", param, val)
 	return callBin("ovs-vsctl", "set", "interface", port, typeStr)
 }
 
-func PortSetOption(port, option, peer string) error {
+func (r *RenderedNetwork) PortSetOption(port, option, peer string) error {
 	param := fmt.Sprintf("options:%s", option)
-	return PortSetParameter(port, param, peer)
+	return r.PortSetParameter(port, param, peer)
 }
 
-func PatchBridges(a, b string) error {
+func (r *RenderedNetwork) PatchBridges(a, b string) error {
 	ab := fmt.Sprintf("p-%s-%s", a, b)
 	ba := fmt.Sprintf("p-%s-%s", b, a)
-	if err := CreateVeth(ab); err != nil {
+	if err := r.CreateVeth(ab); err != nil {
 		return err
 	}
-	if err := CreateVeth(ba); err != nil {
+	if err := r.CreateVeth(ba); err != nil {
 		return err
 	}
-	if err := BridgeAddPort(a, ab); err != nil {
+	if err := r.BridgeAddPort(a, ab); err != nil {
 		return err
 	}
-	if err := PortSetParameter(ab, "type", "patch"); err != nil {
+	if err := r.PortSetParameter(ab, "type", "patch"); err != nil {
 		return err
 	}
-	if err := PortSetOption(ab, "peer", ba); err != nil {
+	if err := r.PortSetOption(ab, "peer", ba); err != nil {
 		return err
 	}
-	if err := BridgeAddPort(b, ba); err != nil {
+	if err := r.BridgeAddPort(b, ba); err != nil {
 		return err
 	}
-	if err := PortSetParameter(ba, "type", "patch"); err != nil {
+	if err := r.PortSetParameter(ba, "type", "patch"); err != nil {
 		return err
 	}
-	if err := PortSetOption(ba, "peer", ab); err != nil {
+	if err := r.PortSetOption(ba, "peer", ab); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func NetNsExec(ns string, cmdn string, nsargs ...string) error {
+func (r *RenderedNetwork) NetNsExec(ns string, cmdn string, nsargs ...string) error {
 	args := []string{"ip", "netns", "exec", ns, cmdn}
 	args = append(args, nsargs...)
 	return callBin(args...)
 }
 
-func SetDev(dev string, state string) error {
+func (r *RenderedNetwork) SetDev(dev string, state string) error {
 	return callBin("ip", "link", "set", "dev", dev, state)
 }
 
-func CreateVeth(a string) error {
-	return callBin("ip", "link", "add", a, "type", "veth")
+func (r *RenderedNetwork) CreateVeth(a string) error {
+	err := callBin("ip", "link", "add", a, "type", "veth")
+	if err == nil {
+		r.Interfaces[a] = struct{}{}
+	}
+	return err
 }
 
-func CreateVethPair(a, b string) error {
-	return callBin("ip", "link", "add", a, "type", "veth", "peer", "name", b)
+func (r *RenderedNetwork) CreateVethPair(a, b string) error {
+	err := callBin("ip", "link", "add", a, "type", "veth", "peer", "name", b)
+	if err == nil {
+		r.Interfaces[a] = struct{}{}
+		r.Interfaces[b] = struct{}{}
+	}
+	return err
 }
 
-func DeleteInterface(name string) error {
-	return callBin("ip", "link", "del", name)
+func (r *RenderedNetwork) DeleteInterface(name string) error {
+	err := callBin("ip", "link", "del", name)
+	if err == nil {
+		delete(r.Interfaces, name)
+	}
+	return err
 }
 
-func AssignVethToNamespace(veth, ns string) error {
-	return callBin("ip", "link", "set", veth, "netns", ns)
+func (r *RenderedNetwork) AssignVethToNamespace(veth, ns string) error {
+	err := callBin("ip", "link", "set", veth, "netns", ns)
+	if err == nil {
+		delete(r.Interfaces, veth)
+	}
+	return err
 }
 
 type Config struct {
@@ -125,6 +158,12 @@ type Network struct {
 
 	ipnet  *net.IPNet
 	nextIp int64
+}
+
+type RenderedNetwork struct {
+	Bridges    map[string]struct{}
+	Namespaces map[string]struct{}
+	Interfaces map[string]struct{}
 }
 
 func (n *Network) GetNextIp(mask string) (string, error) {
@@ -215,17 +254,17 @@ func (lo *LinkOpts) Apply(iface string) error {
 	return ctrlnet.SetLink(iface, lo.lset)
 }
 
-func Create(cfg *Config) error {
+func Create(cfg *Config) (*RenderedNetwork, error) {
 	nets := make(map[string]*Network)
 	for i := range cfg.Networks {
 		n := cfg.Networks[i]
 		if _, ok := nets[n.Name]; ok {
-			return fmt.Errorf("duplicate network name: %s", n.Name)
+			return nil, fmt.Errorf("duplicate network name: %s", n.Name)
 		}
 
 		_, ipn, err := net.ParseCIDR(n.IpRange)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		n.ipnet = ipn
@@ -236,17 +275,17 @@ func Create(cfg *Config) error {
 	for _, p := range cfg.Peers {
 		_, ok := peers[p.Name]
 		if ok {
-			return fmt.Errorf("duplicate peer name: %s", p.Name)
+			return nil, fmt.Errorf("duplicate peer name: %s", p.Name)
 		}
 		peers[p.Name] = true
 
 		for net, l := range p.Links {
 			if _, ok := nets[net]; !ok {
-				return fmt.Errorf("peer %s has link to non-existent network %q", p.Name, net)
+				return nil, fmt.Errorf("peer %s has link to non-existent network %q", p.Name, net)
 			}
 
 			if err := l.Parse(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -254,65 +293,71 @@ func Create(cfg *Config) error {
 	for name, net := range nets {
 		for targetNet := range net.Links {
 			if _, ok := nets[targetNet]; !ok {
-				return fmt.Errorf("network %s has link to non-existent network %s", name, targetNet)
+				return nil, fmt.Errorf("network %s has link to non-existent network %s", name, targetNet)
 			}
 		}
 	}
 
+	r := &RenderedNetwork{
+		Namespaces: make(map[string]struct{}),
+		Bridges:    make(map[string]struct{}),
+		Interfaces: make(map[string]struct{}),
+	}
+
 	for n := range nets {
-		if err := CreateBridge(n); err != nil {
-			return err
+		if err := r.CreateBridge(n); err != nil {
+			return r, err
 		}
 	}
 
 	for name, net := range nets {
 		for targetNet := range net.Links {
-			if err := PatchBridges(name, targetNet); err != nil {
-				return err
+			if err := r.PatchBridges(name, targetNet); err != nil {
+				return r, err
 			}
 		}
 	}
 
 	for _, p := range cfg.Peers {
-		if err := CreateNamespace(p.Name); err != nil {
-			return err
+		if err := r.CreateNamespace(p.Name); err != nil {
+			return r, err
 		}
 
 		for net, l := range p.Links {
 			lnA := "l-" + p.Name + "-" + net
 			lnB := "br-" + p.Name + "-" + net
 
-			if err := CreateVethPair(lnA, lnB); err != nil {
-				return errors.Wrap(err, "create veth pair")
+			if err := r.CreateVethPair(lnA, lnB); err != nil {
+				return r, errors.Wrap(err, "create veth pair")
 			}
 
-			if err := BridgeAddPort(net, lnB); err != nil {
-				return errors.Wrap(err, "bridge add port")
+			if err := r.BridgeAddPort(net, lnB); err != nil {
+				return r, errors.Wrap(err, "bridge add port")
 			}
 
-			if err := AssignVethToNamespace(lnA, p.Name); err != nil {
-				return errors.Wrap(err, "failed to assign veth to namespace")
+			if err := r.AssignVethToNamespace(lnA, p.Name); err != nil {
+				return r, errors.Wrap(err, "failed to assign veth to namespace")
 			}
 
-			if err := NetNsExec(p.Name, "ip", "link", "set", "dev", "lo", "up"); err != nil {
-				return errors.Wrap(err, "set ns link up")
+			if err := r.NetNsExec(p.Name, "ip", "link", "set", "dev", "lo", "up"); err != nil {
+				return r, errors.Wrap(err, "set ns link up")
 			}
 
-			if err := NetNsExec(p.Name, "ip", "link", "set", "dev", lnA, "up"); err != nil {
-				return errors.Wrap(err, "set ns link up")
+			if err := r.NetNsExec(p.Name, "ip", "link", "set", "dev", lnA, "up"); err != nil {
+				return r, errors.Wrap(err, "set ns link up")
 			}
 
-			if err := SetDev(lnB, "up"); err != nil {
-				return err
+			if err := r.SetDev(lnB, "up"); err != nil {
+				return r, err
 			}
 
 			next, err := nets[net].GetNextIp(p.BindMask)
 			if err != nil {
-				return err
+				return r, err
 			}
 
-			if err := NetNsExec(p.Name, "ip", "addr", "add", next, "dev", lnA); err != nil {
-				return err
+			if err := r.NetNsExec(p.Name, "ip", "addr", "add", next, "dev", lnA); err != nil {
+				return r, err
 			}
 
 			if err := l.Apply(lnA); err != nil {
@@ -322,30 +367,28 @@ func Create(cfg *Config) error {
 		}
 	}
 
-	return nil
+	return r, nil
 }
 
-func Cleanup(cfg *Config) error {
-	for _, n := range cfg.Networks {
-		if err := DeleteBridge(n.Name); err != nil {
-			fmt.Println("error deleting bridge: ", err)
+func (r *RenderedNetwork) Cleanup() error {
+	for iface := range r.Interfaces {
+		if err := r.DeleteInterface(iface); err != nil {
+			return err
 		}
 	}
 
-	for _, p := range cfg.Peers {
-		if err := DeleteNamespace(p.Name); err != nil {
-			fmt.Println("error deleting namespace: ", err)
-		}
-
-		for net, _ := range p.Links {
-			lnA := "l-" + p.Name + "-" + net
-
-			// TODO: check for existence first
-			if err := DeleteInterface(lnA); err != nil {
-				fmt.Println(err)
-			}
+	for ns := range r.Namespaces {
+		if err := r.DeleteNamespace(ns); err != nil {
+			return err
 		}
 	}
+
+	for br := range r.Bridges {
+		if err := r.DeleteBridge(br); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -382,14 +425,15 @@ func main() {
 		},
 	}
 
-	if err := Create(cfg); err != nil {
+	r, err := Create(cfg)
+	if err != nil {
 		panic(err)
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 
-	if err := Cleanup(cfg); err != nil {
+	if err := r.Cleanup; err != nil {
 		panic(err)
 	}
 }
