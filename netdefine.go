@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,27 @@ func callBin(args ...string) error {
 
 	return nil
 
+}
+
+func freshInterfaceName(prefix string) (string, error) {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	max := uint64(0)
+	for _, iface := range ifs {
+		if strings.HasPrefix(iface.Name, prefix) {
+			numstr := iface.Name[len(prefix):]
+			num, err := strconv.ParseUint(numstr, 10, 64)
+			if err != nil {
+				continue
+			}
+			if num > max {
+				max = num
+			}
+		}
+	}
+	return fmt.Sprintf("%s%d", prefix, max), nil
 }
 
 func (r *RenderedNetwork) CreateNamespace(name string) error {
