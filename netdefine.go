@@ -2,11 +2,14 @@ package netdef
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io/ioutil"
 	"math/big"
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,18 +26,70 @@ func callBin(args ...string) error {
 	}
 
 	return nil
-
 }
 
 func freshInterfaceName(prefix string) (string, error) {
-	ifs, err := net.Interfaces()
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
+	names := make([]string, len(ifaces))
+	for i, iface := range ifaces {
+		names[i] = iface.Name
+	}
+	return freshName(prefix, names), nil
+}
+
+var vethRegexp = regexp.MustCompile(`^[0-9]+: ([a-z0-9]+)(@[a-z0-9]+)?:.+`)
+
+func getVethNames() ([]string, error) {
+	cmd := exec.Command("ip", "link", "show", "type", "veth")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	buf := bytes.NewReader(out)
+	scanner := bufio.NewScanner(buf)
+	ret := make([]string, 0)
+	for scanner.Scan() {
+		match := vethRegexp.FindStringSubmatch(scanner.Text())
+		if match != nil {
+			ret = append(ret, match[1])
+		}
+	}
+	return ret, nil
+}
+
+func freshVethName(prefix string) (string, error) {
+	names, err := getVethNames()
+	if err != nil {
+		return "", err
+	}
+	return freshName(prefix, names), nil
+}
+
+func freshNamespaceName(prefix string) (string, error) {
+	files, err := ioutil.ReadDir("/var/run/netns")
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, len(files))
+	for i, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		names[i] = file.Name()
+	}
+	return freshName(prefix, names), nil
+}
+
+func freshName(prefix string, existing []string) string {
+	found := false
 	max := uint64(0)
-	for _, iface := range ifs {
-		if strings.HasPrefix(iface.Name, prefix) {
-			numstr := iface.Name[len(prefix):]
+	for _, name := range existing {
+		if strings.HasPrefix(name, prefix) {
+			found = true
+			numstr := name[len(prefix):]
 			num, err := strconv.ParseUint(numstr, 10, 64)
 			if err != nil {
 				continue
@@ -44,13 +99,47 @@ func freshInterfaceName(prefix string) (string, error) {
 			}
 		}
 	}
-	return fmt.Sprintf("%s%d", prefix, max), nil
+	if found {
+		max++
+	}
+	return fmt.Sprintf("%s%d", prefix, max)
+}
+
+func (r *RenderedNetwork) freshNetworkName(name string) (string, error) {
+	bridgename, err := r.freshInterfaceName("Bridge")
+	if err != nil {
+		return "", err
+	}
+	r.subnets[name] = bridgename
+	return bridgename, nil
+}
+
+func (r *RenderedNetwork) freshInterfaceName(typ string) (string, error) {
+	prefix := r.prefixes[typ]
+	bridgename, err := freshInterfaceName(prefix)
+	if err != nil {
+		return "", err
+	}
+	return bridgename, nil
+}
+
+func (r *RenderedNetwork) freshVethName(typ string) (string, error) {
+	prefix := r.prefixes[typ]
+	bridgename, err := freshVethName(prefix)
+	if err != nil {
+		return "", err
+	}
+	return bridgename, nil
 }
 
 func (r *RenderedNetwork) CreateNamespace(name string) error {
-	err := callBin("ip", "netns", "add", name)
+	freshname, err := freshNamespaceName(r.prefixes["Namespace"])
+	if err != nil {
+		return err
+	}
+	err = callBin("ip", "netns", "add", freshname)
 	if err == nil {
-		r.Namespaces[name] = struct{}{}
+		r.Namespaces[name] = freshname
 	}
 	return err
 }
@@ -94,31 +183,37 @@ func (r *RenderedNetwork) PortSetOption(port, option, peer string) error {
 }
 
 func (r *RenderedNetwork) PatchBridges(a, b string) error {
-	ab := fmt.Sprintf("p-%s-%s", a, b)
-	ba := fmt.Sprintf("p-%s-%s", b, a)
-	if err := r.CreateVeth(ab); err != nil {
-		return err
+	ab, err := r.freshVethName("Port")
+	if err != nil {
+		return errors.Wrap(err, "creating fresh port name")
 	}
-	if err := r.CreateVeth(ba); err != nil {
-		return err
+	if err = r.CreateVeth(ab); err != nil {
+		return errors.Wrap(err, "creating port")
 	}
-	if err := r.BridgeAddPort(a, ab); err != nil {
-		return err
+	ba, err := r.freshVethName("Port")
+	if err != nil {
+		return errors.Wrap(err, "creating fresh port name")
 	}
-	if err := r.PortSetParameter(ab, "type", "patch"); err != nil {
-		return err
+	if err = r.CreateVeth(ba); err != nil {
+		return errors.Wrap(err, "creating port")
 	}
-	if err := r.PortSetOption(ab, "peer", ba); err != nil {
-		return err
+	if err = r.BridgeAddPort(a, ab); err != nil {
+		return errors.Wrap(err, "adding port")
 	}
-	if err := r.BridgeAddPort(b, ba); err != nil {
-		return err
+	if err = r.PortSetParameter(ab, "type", "patch"); err != nil {
+		return errors.Wrap(err, "configuring port type")
 	}
-	if err := r.PortSetParameter(ba, "type", "patch"); err != nil {
-		return err
+	if err = r.PortSetOption(ab, "peer", ba); err != nil {
+		return errors.Wrap(err, "configuring port options")
 	}
-	if err := r.PortSetOption(ba, "peer", ab); err != nil {
-		return err
+	if err = r.BridgeAddPort(b, ba); err != nil {
+		return errors.Wrap(err, "adding port")
+	}
+	if err = r.PortSetParameter(ba, "type", "patch"); err != nil {
+		return errors.Wrap(err, "configuring port type")
+	}
+	if err = r.PortSetOption(ba, "peer", ab); err != nil {
+		return errors.Wrap(err, "configuring port options")
 	}
 
 	return nil
@@ -170,6 +265,7 @@ func (r *RenderedNetwork) AssignVethToNamespace(veth, ns string) error {
 type Config struct {
 	Networks []Network
 	Peers    []Peer
+	Prefixes map[string]string
 }
 
 type Network struct {
@@ -184,8 +280,35 @@ type Network struct {
 
 type RenderedNetwork struct {
 	Bridges    map[string]struct{}
-	Namespaces map[string]struct{}
+	Namespaces map[string]string
 	Interfaces map[string]struct{}
+
+	subnets  map[string]string
+	prefixes map[string]string
+}
+
+func (c *Config) NewRenderedNetwork() *RenderedNetwork {
+	r := &RenderedNetwork{
+		Bridges:    make(map[string]struct{}),
+		Namespaces: make(map[string]string),
+		Interfaces: make(map[string]struct{}),
+		subnets:    make(map[string]string),
+		prefixes: map[string]string{
+			"Bridge":    "br",
+			"Interface": "veth",
+			"Patch":     "patch",
+			"Port":      "tap",
+			"Namespace": "ns",
+		},
+	}
+
+	if c.Prefixes != nil {
+		for k, v := range c.Prefixes {
+			r.prefixes[k] = v
+		}
+	}
+
+	return r
 }
 
 func (n *Network) GetNextIp(mask string) (string, error) {
@@ -320,22 +443,24 @@ func Create(cfg *Config) (*RenderedNetwork, error) {
 		}
 	}
 
-	r := &RenderedNetwork{
-		Namespaces: make(map[string]struct{}),
-		Bridges:    make(map[string]struct{}),
-		Interfaces: make(map[string]struct{}),
-	}
+	r := cfg.NewRenderedNetwork()
 
 	for n := range nets {
-		if err := r.CreateBridge(n); err != nil {
-			return r, err
+		bridgename, err := r.freshNetworkName(n)
+		if err != nil {
+			return r, errors.Wrap(err, "generating network name")
+		}
+		if err := r.CreateBridge(bridgename); err != nil {
+			return r, errors.Wrap(err, "creating bridge")
 		}
 	}
 
 	for name, net := range nets {
+		bridge := r.subnets[name]
 		for targetNet := range net.Links {
-			if err := r.PatchBridges(name, targetNet); err != nil {
-				return r, err
+			targetBridge := r.subnets[targetNet]
+			if err := r.PatchBridges(bridge, targetBridge); err != nil {
+				return r, errors.Wrap(err, "patching bridges")
 			}
 		}
 	}
@@ -344,28 +469,36 @@ func Create(cfg *Config) (*RenderedNetwork, error) {
 		if err := r.CreateNamespace(p.Name); err != nil {
 			return r, err
 		}
+		ns := r.Namespaces[p.Name]
 
 		for net, l := range p.Links {
-			lnA := "l-" + p.Name + "-" + net
-			lnB := "br-" + p.Name + "-" + net
+			bridge := r.subnets[net]
+			lnA, err := r.freshVethName("Interface")
+			if err != nil {
+				return r, errors.Wrap(err, "generate interface name")
+			}
+			lnB, err := r.freshVethName("Port")
+			if err != nil {
+				return r, errors.Wrap(err, "generate port name")
+			}
 
 			if err := r.CreateVethPair(lnA, lnB); err != nil {
 				return r, errors.Wrap(err, "create veth pair")
 			}
 
-			if err := r.BridgeAddPort(net, lnB); err != nil {
+			if err := r.BridgeAddPort(bridge, lnB); err != nil {
 				return r, errors.Wrap(err, "bridge add port")
 			}
 
-			if err := r.AssignVethToNamespace(lnA, p.Name); err != nil {
+			if err := r.AssignVethToNamespace(lnA, ns); err != nil {
 				return r, errors.Wrap(err, "failed to assign veth to namespace")
 			}
 
-			if err := r.NetNsExec(p.Name, "ip", "link", "set", "dev", "lo", "up"); err != nil {
+			if err := r.NetNsExec(ns, "ip", "link", "set", "dev", "lo", "up"); err != nil {
 				return r, errors.Wrap(err, "set ns link up")
 			}
 
-			if err := r.NetNsExec(p.Name, "ip", "link", "set", "dev", lnA, "up"); err != nil {
+			if err := r.NetNsExec(ns, "ip", "link", "set", "dev", lnA, "up"); err != nil {
 				return r, errors.Wrap(err, "set ns link up")
 			}
 
@@ -378,7 +511,7 @@ func Create(cfg *Config) (*RenderedNetwork, error) {
 				return r, err
 			}
 
-			if err := r.NetNsExec(p.Name, "ip", "addr", "add", next, "dev", lnA); err != nil {
+			if err := r.NetNsExec(ns, "ip", "addr", "add", next, "dev", lnA); err != nil {
 				return r, err
 			}
 
@@ -399,7 +532,7 @@ func (r *RenderedNetwork) Cleanup() error {
 		}
 	}
 
-	for ns := range r.Namespaces {
+	for _, ns := range r.Namespaces {
 		if err := r.DeleteNamespace(ns); err != nil {
 			return err
 		}
