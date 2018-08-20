@@ -14,6 +14,13 @@ func main() {
 
 	create := cli.Command{
 		Name: "create",
+		Flags: []cli.Flag{
+			cli.StringFlag{
+				Name:  "output",
+				Value: "config.render.json",
+				Usage: "Path to write out the rendered configuration",
+			},
+		},
 		Action: func(c *cli.Context) error {
 			if c.Args().First() == "" {
 				return fmt.Errorf("must specify netdef configuration file")
@@ -23,16 +30,28 @@ func main() {
 			if err != nil {
 				return err
 			}
-			defer fi.Close()
 
 			var cfg netdef.Config
-			if err := json.NewDecoder(fi).Decode(&cfg); err != nil {
+			if err = json.NewDecoder(fi).Decode(&cfg); err != nil {
+				fi.Close()
+				return err
+			}
+			fi.Close()
+
+			r, err := netdef.Create(&cfg)
+			if err != nil {
 				return err
 			}
 
-			if err := netdef.Create(&cfg); err != nil {
+			fi, err = os.Open(c.String("output"))
+			if err != nil {
 				return err
 			}
+			if err := json.NewEncoder(fi).Encode(r); err != nil {
+				fi.Close()
+				return err
+			}
+			fi.Close()
 
 			return nil
 		},
@@ -51,12 +70,12 @@ func main() {
 			}
 			defer fi.Close()
 
-			var cfg netdef.Config
-			if err := json.NewDecoder(fi).Decode(&cfg); err != nil {
+			var r netdef.RenderedNetwork
+			if err := json.NewDecoder(fi).Decode(&r); err != nil {
 				return err
 			}
 
-			if err := netdef.Cleanup(&cfg); err != nil {
+			if err := r.Cleanup(); err != nil {
 				return err
 			}
 
