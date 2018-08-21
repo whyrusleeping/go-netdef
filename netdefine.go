@@ -201,7 +201,7 @@ func (r *RenderedNetwork) PortSetOption(port, option, peer string) error {
 
 // PatchBridges creates patch ports on two interfaces and peers them,
 // effectively connecting two openvswitch bridges.
-func (r *RenderedNetwork) PatchBridges(a, b string) error {
+func (r *RenderedNetwork) PatchBridges(a, b string, l *LinkOpts) error {
 	ab, err := r.freshVethName("Port")
 	if err != nil {
 		return errors.Wrap(err, "creating fresh port name")
@@ -233,6 +233,11 @@ func (r *RenderedNetwork) PatchBridges(a, b string) error {
 	}
 	if err = r.PortSetOption(ba, "peer", ab); err != nil {
 		return errors.Wrap(err, "configuring port options")
+	}
+	if l != nil {
+		if err = l.Apply(ab); err != nil {
+			return errors.Wrap(err, "setting patch link options")
+		}
 	}
 
 	return nil
@@ -315,7 +320,7 @@ type Network struct {
 	IpRange string
 	// Links is a map of subnets this network is connected to to the link
 	// options that describe the physical qualities of the link.
-	Links map[string]LinkOpts
+	Links map[string]*LinkOpts
 	// BindMask is a default subnet mask for all peers created on this network.
 	BindMask string
 
@@ -509,9 +514,16 @@ func (cfg *Config) Create() (*RenderedNetwork, error) {
 	}
 
 	for name, net := range nets {
-		for targetNet := range net.Links {
+		for targetNet, l := range net.Links {
 			if _, ok := nets[targetNet]; !ok {
 				return nil, fmt.Errorf("network %s has link to non-existent network %s", name, targetNet)
+			}
+
+			if l == nil {
+				continue
+			}
+			if err := l.Parse(); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -530,9 +542,9 @@ func (cfg *Config) Create() (*RenderedNetwork, error) {
 
 	for name, net := range nets {
 		bridge := r.subnets[name]
-		for targetNet := range net.Links {
+		for targetNet, l := range net.Links {
 			targetBridge := r.subnets[targetNet]
-			if err := r.PatchBridges(bridge, targetBridge); err != nil {
+			if err := r.PatchBridges(bridge, targetBridge, l); err != nil {
 				return r, errors.Wrap(err, "patching bridges")
 			}
 		}
@@ -634,8 +646,8 @@ func main() {
 			{
 				Name:    "officenetwork",
 				IpRange: "10.1.2.0/24",
-				Links: map[string]LinkOpts{
-					"homenetwork": LinkOpts{},
+				Links: map[string]*LinkOpts{
+					"homenetwork": nil,
 				},
 			},
 		},
