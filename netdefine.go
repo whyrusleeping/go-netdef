@@ -182,15 +182,18 @@ func (r *RenderedNetwork) DeleteBridge(name string) error {
 	return err
 }
 
+// BridgeAddPort adds a port to an openvswitch bridge.
 func (r *RenderedNetwork) BridgeAddPort(bridge, ifname string) error {
 	return callBin("ovs-vsctl", "add-port", bridge, ifname)
 }
 
+// PortSetParameter sets a variable for a given port.
 func (r *RenderedNetwork) PortSetParameter(port, param, val string) error {
 	typeStr := fmt.Sprintf("%s=%s", param, val)
 	return callBin("ovs-vsctl", "set", "interface", port, typeStr)
 }
 
+// PortSetOption sets an option for a given port.
 func (r *RenderedNetwork) PortSetOption(port, option, peer string) error {
 	param := fmt.Sprintf("options:%s", option)
 	return r.PortSetParameter(port, param, peer)
@@ -392,7 +395,7 @@ type Peer struct {
 	// Name of the peer.
 	Name string
 	// A map of subnets this peer is connected to and their link properties.
-	Links map[string]LinkOpts
+	Links map[string]*LinkOpts
 	// The default subnet mask for this peer.
 	BindMask string
 }
@@ -458,7 +461,7 @@ func (lo *LinkOpts) Apply(iface string) error {
 	}
 
 	if lo.lset == nil {
-		return fmt.Errorf("linkopts has not been parsed")
+		return fmt.Errorf("linkopts has not been parsed for iface %s", iface)
 	}
 
 	return ctrlnet.SetLink(iface, lo.lset)
@@ -496,6 +499,9 @@ func (cfg *Config) Create() (*RenderedNetwork, error) {
 				return nil, fmt.Errorf("peer %s has link to non-existent network %q", p.Name, net)
 			}
 
+			if l == nil {
+				continue
+			}
 			if err := l.Parse(); err != nil {
 				return nil, err
 			}
@@ -582,9 +588,11 @@ func (cfg *Config) Create() (*RenderedNetwork, error) {
 				return r, err
 			}
 
-			if err := l.Apply(lnA); err != nil {
-				fmt.Println(err)
-				// return err
+			if l == nil {
+				continue
+			}
+			if err := l.Apply(lnB); err != nil {
+				return r, err
 			}
 		}
 	}
@@ -634,15 +642,15 @@ func main() {
 		Peers: []Peer{
 			{
 				Name: "c1",
-				Links: map[string]LinkOpts{
-					"homenetwork": LinkOpts{},
+				Links: map[string]*LinkOpts{
+					"homenetwork": &LinkOpts{},
 				},
 				BindMask: "255.255.0.0",
 			},
 			{
 				Name: "c2",
-				Links: map[string]LinkOpts{
-					"officenetwork": LinkOpts{
+				Links: map[string]*LinkOpts{
+					"officenetwork": &LinkOpts{
 						Latency: "50ms",
 					},
 				},
