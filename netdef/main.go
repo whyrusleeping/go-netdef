@@ -31,14 +31,14 @@ func main() {
 				return err
 			}
 
-			var cfg netdef.Config
-			if err = json.NewDecoder(fi).Decode(&cfg); err != nil {
+			cfg := &netdef.Config{}
+			if err = json.NewDecoder(fi).Decode(cfg); err != nil {
 				fi.Close()
 				return err
 			}
 			fi.Close()
 
-			r, err := netdef.Create(&cfg)
+			r, err := cfg.Create()
 			if err != nil {
 				return err
 			}
