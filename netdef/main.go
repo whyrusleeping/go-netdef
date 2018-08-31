@@ -9,6 +9,33 @@ import (
 	"github.com/whyrusleeping/go-netdef"
 )
 
+func readConfig(path string) (*netdef.Config, error) {
+	fi, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer fi.Close()
+
+	cfg := &netdef.Config{}
+	if err = json.NewDecoder(fi).Decode(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func writeRender(path string, r *netdef.RenderedNetwork) error {
+	fi, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer fi.Close()
+	if err := json.NewEncoder(fi).Encode(r); err != nil {
+		return err
+	}
+	return nil
+}
+
 func main() {
 	app := cli.NewApp()
 
@@ -26,32 +53,20 @@ func main() {
 				return fmt.Errorf("must specify netdef configuration file")
 			}
 
-			fi, err := os.Open(c.Args().First())
+			cfg, err := readConfig(c.Args().First())
 			if err != nil {
 				return err
 			}
-
-			cfg := &netdef.Config{}
-			if err = json.NewDecoder(fi).Decode(cfg); err != nil {
-				fi.Close()
-				return err
-			}
-			fi.Close()
 
 			r, err := cfg.Create()
 			if err != nil {
 				return err
 			}
 
-			fi, err = os.Open(c.String("output"))
+			err = writeRender(c.String("output"), r)
 			if err != nil {
 				return err
 			}
-			if err := json.NewEncoder(fi).Encode(r); err != nil {
-				fi.Close()
-				return err
-			}
-			fi.Close()
 
 			return nil
 		},
