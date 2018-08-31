@@ -32,7 +32,7 @@ func ParseHumanLinkRate(s string) (uint, error) {
 	if !unicode.IsDigit(rune(s[len(s)-1])) {
 		m, ok := prefixes[s[len(s)-1]]
 		if !ok {
-			return 0, fmt.Errorf("invalid metric prefix: %s", s[len(s)-1])
+			return 0, fmt.Errorf("invalid metric prefix: %c", s[len(s)-1])
 		}
 
 		mul = m
