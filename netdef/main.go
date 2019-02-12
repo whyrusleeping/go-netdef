@@ -25,7 +25,7 @@ func readConfig(path string) (*netdef.Config, error) {
 }
 
 func writeRender(path string, r *netdef.RenderedNetwork) error {
-	fi, err := os.Open(path)
+	fi, err := os.Create(path)
 	if err != nil {
 		return err
 	}
