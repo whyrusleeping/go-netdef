@@ -77,17 +77,24 @@ func freshVethName(prefix string) (string, error) {
 // exising namespaces.
 func freshNamespaceName(prefix string) (string, error) {
 	files, err := ioutil.ReadDir("/var/run/netns")
-	if err != nil {
+	if err == nil {
+		// Successfully opened the directory
+		names := make([]string, len(files))
+		for i, file := range files {
+			if file.IsDir() {
+				continue
+			}
+			names[i] = file.Name()
+		}
+		return freshName(prefix, names), nil
+	} else if os.IsNotExist(err) {
+		// Directory doesn't exist, assume there are no namespaces
+		names := make([]string, 0)
+		return freshName(prefix, names), nil
+	} else {
+		// Real error
 		return "", err
 	}
-	names := make([]string, len(files))
-	for i, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		names[i] = file.Name()
-	}
-	return freshName(prefix, names), nil
 }
 
 // freshName generates a new name based on prefix that does not collide with any
