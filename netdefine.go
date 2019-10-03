@@ -19,10 +19,15 @@ import (
 )
 
 func callBin(args ...string) error {
+	_, err := exec.LookPath(args[0])
+	if err != nil {
+		return errors.Wrap(err, "looking up binary failed")
+	}
+
 	cmd := exec.Command(args[0], args[1:]...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf(strings.TrimRight(string(out), "\n"))
+		return fmt.Errorf("%s (exit code %d)", strings.TrimRight(string(out), "\n"), cmd.ProcessState.ExitCode())
 	}
 
 	return nil
@@ -642,6 +647,7 @@ func (r *RenderedNetwork) Cleanup() error {
 	return nil
 }
 
+/*
 func main() {
 	cfg := &Config{
 		Networks: []Network{
@@ -689,3 +695,4 @@ func main() {
 		panic(err)
 	}
 }
+*/
